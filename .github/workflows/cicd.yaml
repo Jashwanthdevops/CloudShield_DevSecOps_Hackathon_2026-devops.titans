@@ -60,15 +60,21 @@ jobs:
         ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
         docker push $ACCOUNT_ID.dkr.ecr.${AWS_REGION}.amazonaws.com/$ECR_REPOSITORY:latest
 
-    - name: Install kubectl
-      uses: azure/setup-kubectl@v3
-      with:
+        - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+        with:
         version: 'v1.30.0'
 
-    - name: Configure Kubeconfig
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ap-south-1
+
+    - name: Update kubeconfig for EKS
       run: |
-        mkdir -p $HOME/.kube
-        echo "${{ secrets.KUBECONFIG }}" > $HOME/.kube/config
+        aws eks update-kubeconfig --region ap-south-1 --name devsecops-cluster
 
     - name: Deploy to Kubernetes
       run: |
