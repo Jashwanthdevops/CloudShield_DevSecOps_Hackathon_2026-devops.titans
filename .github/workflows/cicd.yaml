@@ -3,10 +3,10 @@ name: DevSecOps CI/CD Pipeline
 on:
   push:
     branches:
-      - master
+      - main
 
 env:
-  AWS_REGION: ap-northeast-1
+  AWS_REGION: ap-south-1
   ECR_REPOSITORY: devsecops-java-app
   K8S_NAMESPACE: default    # You can change namespace
 
