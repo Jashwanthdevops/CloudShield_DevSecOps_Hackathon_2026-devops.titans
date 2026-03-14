@@ -8,7 +8,7 @@ on:
 env:
   AWS_REGION: ap-south-1
   ECR_REPOSITORY: devsecops-java-app
-  K8S_NAMESPACE: default    # You can change namespace
+  K8S_NAMESPACE: default
 
 jobs:
   build-and-deploy:
@@ -19,29 +19,28 @@ jobs:
 
     - name: Checkout Code
       uses: actions/checkout@v3
-      
-    - name: Check Target Folder
-      run: ls target
 
     - name: Setup Java
       uses: actions/setup-java@v3
       with:
-        distribution: 'temurin'
+        distribution: temurin
         java-version: '17'
 
     - name: Build Java Application
       run: mvn clean package -DskipTests
-      working-directory: board
+
+    - name: Verify JAR file
+      run: ls target
 
     - name: Build Docker Image
       run: docker build -t ${{ env.ECR_REPOSITORY }}:latest .
 
-    - name: Run Trivy Security Scan
+    - name: Scan Docker Image
       uses: aquasecurity/trivy-action@master
       with:
         image-ref: ${{ env.ECR_REPOSITORY }}:latest
         format: table
-        exit-code: 0           
+        exit-code: 0
 
     - name: Configure AWS Credentials
       uses: aws-actions/configure-aws-credentials@v2
@@ -58,24 +57,25 @@ jobs:
         ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
         docker tag $ECR_REPOSITORY:latest $ACCOUNT_ID.dkr.ecr.${AWS_REGION}.amazonaws.com/$ECR_REPOSITORY:latest
 
-    - name: Push Docker Image to ECR
+    - name: Push Docker Image
       run: |
         ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
         docker push $ACCOUNT_ID.dkr.ecr.${AWS_REGION}.amazonaws.com/$ECR_REPOSITORY:latest
 
-    # ----------------- Kubernetes Deployment -----------------
-    - name: Set up kubectl
+    - name: Install kubectl
       uses: azure/setup-kubectl@v3
       with:
         version: 'v1.30.0'
 
-    - name: Configure kubeconfig
+    - name: Configure Kubeconfig
       run: |
+        mkdir -p $HOME/.kube
         echo "${{ secrets.KUBECONFIG }}" > $HOME/.kube/config
 
-    - name: Update Kubernetes Deployment
+    - name: Deploy to Kubernetes
       run: |
-        ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-        IMAGE_URI=$ACCOUNT_ID.dkr.ecr.${AWS_REGION}.amazonaws.com/$ECR_REPOSITORY:latest
-        kubectl set image deployment/devsecops-java-app devsecops-java-app=$IMAGE_URI -n ${{ env.K8S_NAMESPACE }}
-        kubectl rollout status deployment/devsecops-java-app -n ${{ env.K8S_NAMESPACE }}
+        kubectl apply -f k8s/deployment.yaml
+        kubectl apply -f k8s/service.yaml
+
+    - name: Verify Deployment
+      run: kubectl get pods
