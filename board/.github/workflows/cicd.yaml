@@ -1,4 +1,4 @@
-name: Java CI/CD to AWS ECR & Kubernetes
+name: DevSecOps CI/CD Pipeline
 
 on:
   push:
@@ -7,59 +7,71 @@ on:
 
 env:
   AWS_REGION: ap-south-1
-  ECR_REGISTRY: 571264418338.dkr.ecr.ap-northeast-1.amazonaws.com
   ECR_REPOSITORY: devsecops-java-app
-  IMAGE_TAG: latest
-  K8S_DEPLOYMENT_FILE: k8s/deployment.yaml
+  K8S_NAMESPACE: default    # You can change namespace
 
 jobs:
   build-and-deploy:
+
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Checkout your repository
-      - name: Checkout repo
-        uses: actions/checkout@v3
 
-      # 2️⃣ Set up Java JDK 17
-      - name: Set up JDK
-        uses: actions/setup-java@v3
-        with:
-          java-version: '17'
+    - name: Checkout Code
+      uses: actions/checkout@v3
 
-      # 3️⃣ Build Java app with Maven
-      - name: Build with Maven
-        run: mvn clean package -DskipTests
+    - name: Setup Java
+      uses: actions/setup-java@v3
+      with:
+        distribution: 'temurin'
+        java-version: '17'
 
-      # 4️⃣ Log in to AWS ECR
-      - name: Login to AWS ECR
-        uses: aws-actions/amazon-ecr-login@v2
-        with:
-          region: ${{ env.AWS_REGION }}
+    - name: Build Java Application
+      run: mvn clean package -DskipTests
 
-      # 5️⃣ Build Docker image
-      - name: Build Docker image
-        run: docker build -t $ECR_REPOSITORY:$IMAGE_TAG .
+    - name: Build Docker Image
+      run: docker build -t ${{ env.ECR_REPOSITORY }}:latest .
 
-      # 6️⃣ Tag Docker image for ECR
-      - name: Tag Docker image
-        run: docker tag $ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+    - name: Run Trivy Security Scan
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ env.ECR_REPOSITORY }}:latest
+        format: table
+        exit-code: 0           
 
-      # 7️⃣ Push Docker image to ECR
-      - name: Push Docker image
-        run: docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
 
-      # 8️⃣ Set up kubectl to deploy
-      - name: Set up kubectl
-        uses: azure/setup-kubectl@v3
-        with:
-          version: 'latest'
+    - name: Login to Amazon ECR
+      uses: aws-actions/amazon-ecr-login@v1
 
-      # 9️⃣ Configure kubeconfig (using GitHub secrets for access)
-      - name: Configure kubeconfig
-        run: |
-          aws eks update-kubeconfig --region $AWS_REGION --name devsecops-eks
+    - name: Tag Docker Image
+      run: |
+        ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+        docker tag $ECR_REPOSITORY:latest $ACCOUNT_ID.dkr.ecr.${AWS_REGION}.amazonaws.com/$ECR_REPOSITORY:latest
 
-      # 🔟 Deploy to Kubernetes
-      - name: Deploy to Kubernetes
-        run: kubectl apply -f $K8S_DEPLOYMENT_FILE
+    - name: Push Docker Image to ECR
+      run: |
+        ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+        docker push $ACCOUNT_ID.dkr.ecr.${AWS_REGION}.amazonaws.com/$ECR_REPOSITORY:latest
+
+    # ----------------- Kubernetes Deployment -----------------
+    - name: Set up kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'v1.30.0'
+
+    - name: Configure kubeconfig
+      run: |
+        echo "${{ secrets.KUBECONFIG }}" > $HOME/.kube/config
+
+    - name: Update Kubernetes Deployment
+      run: |
+        ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+        IMAGE_URI=$ACCOUNT_ID.dkr.ecr.${AWS_REGION}.amazonaws.com/$ECR_REPOSITORY:latest
+        kubectl set image deployment/devsecops-java-app devsecops-java-app=$IMAGE_URI -n ${{ env.K8S_NAMESPACE }}
+        kubectl rollout status deployment/devsecops-java-app -n ${{ env.K8S_NAMESPACE }}
