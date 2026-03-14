@@ -28,6 +28,7 @@ jobs:
 
     - name: Build Java Application
       run: mvn clean package -DskipTests
+      working-directory: board
 
     - name: Verify JAR file
       run: ls target
